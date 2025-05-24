@@ -157,18 +157,37 @@ function calcProgress(lang, words, results) {
 }
 
 export function segmentText(lang, text) {
-  let result = [];
   if (lang === "zh") {
-    let chineseSegmenter = new Intl.Segmenter("zh", {
-      granularity: "grapheme",
-    });
-    result = [...chineseSegmenter.segment(text)].map(
-      (segment) => segment.segment
-    );
+    // Split text into segments while preserving English words
+    const segments = [];
+    let currentEnglishWord = "";
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      // Check if character is English letter (including common accents), number, or common English punctuation
+      if (/[a-zA-ZÀ-ÿ0-9.,!?;:'"-]/.test(char)) {
+        currentEnglishWord += char;
+      } else {
+        // If we have collected an English word, add it to segments
+        if (currentEnglishWord) {
+          segments.push(currentEnglishWord.trim());
+          currentEnglishWord = "";
+        }
+        // Add Chinese character as its own segment
+        if (char.trim()) {
+          // Only add if not whitespace
+          segments.push(char);
+        }
+      }
+    }
+    // Add any remaining English word
+    if (currentEnglishWord) {
+      segments.push(currentEnglishWord.trim());
+    }
+    return segments;
   } else {
-    result = text.split(" ");
+    return text.split(" ");
   }
-  return result;
 }
 
 export default function Teleprompter({
@@ -283,18 +302,23 @@ export default function Teleprompter({
   return (
     <React.Fragment>
       <StyledTeleprompter ref={scrollRef}>
-        {words.map((word, i) => (
-          <span
-            key={`${word}:${i}`}
-            data-index={i}
-            style={{
-              color: i < progress ? "#888" : "#fff",
-            }}
-          >
-            {word}
-            {language === "zh" ? "" : " "}
-          </span>
-        ))}
+        {words.map((word, i) => {
+          // Check if current word is English/Latin script in Chinese mode
+          const isLatinInChinese =
+            language === "zh" && /[a-zA-ZÀ-ÿ]/.test(word);
+          return (
+            <span
+              key={`${word}:${i}`}
+              data-index={i}
+              style={{
+                color: i < progress ? "#888" : "#eee",
+              }}
+            >
+              {isLatinInChinese ? ` ${word} ` : word}
+              {language === "zh" ? "" : " "}
+            </span>
+          );
+        })}
       </StyledTeleprompter>{" "}
       {/* {results && <Interim> {results} </Interim>} */}
     </React.Fragment>
