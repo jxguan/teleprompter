@@ -3,18 +3,33 @@ import styled from "styled-components";
 import stringSimilarity from "string-similarity";
 
 const StyledTeleprompter = styled.div`
-  font-size: 5.25rem;
+  font-size: 3rem;
+  padding: 1.5rem;
+  line-height: 1.5;
+  border-radius: 1rem;
   width: 100%;
-  height: 100%-;
+  height: calc(100% - 8rem);
   overflow: scroll;
   scroll-behavior: smooth;
   display: block;
-  margin-bottom: 1rem;
   text-align: justify;
   background: transparent no-repeat;
   background-color: black;
   background-position: 0 0, 0 100%;
   background-size: 100% 14px;
+  position: relative;
+  -webkit-overflow-scrolling: touch; /* Enables smooth scrolling on iOS */
+
+  /* Hide scrollbars while keeping functionality */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+  &::-webkit-scrollbar {
+    display: none; /* Chrome, Safari and Opera */
+  }
+
+  /* Prevent overscroll on iOS */
+  overscroll-behavior: contain;
+  touch-action: pan-y pinch-zoom;
 `;
 
 const Interim = styled.div`
@@ -32,7 +47,10 @@ const cleanWord = (word) =>
     .toLocaleLowerCase()
     .replace(/[^a-z]/gi, "");
 
-function checkSimilarWords(word1, word2) {
+function checkSimilarWords(lang, word1, word2) {
+  if (lang === "zh") {
+    return word1 === word2;
+  }
   const similarity = stringSimilarity.compareTwoStrings(
     cleanWord(word1),
     cleanWord(word2)
@@ -51,12 +69,16 @@ var currResults = [];
 let lastWordsIndex = -1;
 let lastResultsIndex = -1;
 
-function calcProgress(words, results) {
+function calcProgress(lang, words, results) {
   /*
   console.log("Entering calcProgress with:");
   console.log(results);
   console.log("lastWordsIndex = " + lastWordsIndex);
-  console.log("lastResultsIndex = " + lastResultsIndex);*/
+  console.log("lastResultsIndex = " + lastResultsIndex);
+  */
+  if (words.length === 0 || results.length === 0) {
+    return 0;
+  }
   let newWordsIndex =
     words.length > results.length * 2 ? results.length * 2 : words.length;
   for (let i = lastWordsIndex + 1; i < newWordsIndex; i++) {
@@ -72,7 +94,7 @@ function calcProgress(words, results) {
     i++
   ) {
     for (let j = 1; j <= lastResultsIndex; j++) {
-      if (checkSimilarWords(words[i - 1], results[j - 1])) {
+      if (checkSimilarWords(lang, words[i - 1], results[j - 1])) {
         editDist[i][j] = editDist[i - 1][j - 1];
       } else {
         editDist[i][j] =
@@ -87,7 +109,7 @@ function calcProgress(words, results) {
       j < results.length;
       j++
     ) {
-      if (checkSimilarWords(words[i - 1], results[j - 1])) {
+      if (checkSimilarWords(lang, words[i - 1], results[j - 1])) {
         editDist[i][j] = editDist[i - 1][j - 1];
       } else {
         editDist[i][j] =
@@ -106,7 +128,7 @@ function calcProgress(words, results) {
       j < results.length;
       j++
     ) {
-      if (checkSimilarWords(words[i - 1], results[j - 1])) {
+      if (checkSimilarWords(lang, words[i - 1], results[j - 1])) {
         editDist[i][j] = editDist[i - 1][j - 1];
       } else {
         editDist[i][j] =
@@ -134,7 +156,28 @@ function calcProgress(words, results) {
   return minIndex + 1;
 }
 
-export default function Teleprompter({ words, progress, listening, onChange }) {
+export function segmentText(lang, text) {
+  let result = [];
+  if (lang === "zh") {
+    let chineseSegmenter = new Intl.Segmenter("zh", {
+      granularity: "grapheme",
+    });
+    result = [...chineseSegmenter.segment(text)].map(
+      (segment) => segment.segment
+    );
+  } else {
+    result = text.split(" ");
+  }
+  return result;
+}
+
+export default function Teleprompter({
+  words,
+  language,
+  progress,
+  listening,
+  onChange,
+}) {
   const recog = React.useRef(null);
   const scrollRef = React.useRef(null);
 
@@ -144,45 +187,63 @@ export default function Teleprompter({ words, progress, listening, onChange }) {
     recog.current = new SpeechRecognition();
     recog.current.continuous = true;
     recog.current.interimResults = true;
-    //recog.current.lang = "en-us";
-    recog.current.lang = "zh";
-  }, []);
+    recog.current.lang = language === "zh" ? "zh" : "en-us";
+  }, [language]);
 
   const autoRestart = React.useCallback(() => {
-    accResults = accResults.concat(currResults);
-    currResults = [];
-    console.log(accResults);
-    recog.current.start();
+    try {
+      accResults = accResults.concat(currResults);
+      currResults = [];
+      recog.current.start();
+    } catch (e) {
+      console.log("Failed to restart recognition:", e);
+    }
   }, []);
 
   React.useEffect(() => {
     if (listening) {
-      recog.current.start();
-      recog.current.addEventListener("end", autoRestart);
+      try {
+        recog.current.start();
+        recog.current.addEventListener("end", autoRestart);
+      } catch (e) {
+        console.log("Failed to start recognition:", e);
+      }
     } else {
       recog.current.removeEventListener("end", autoRestart);
+      setTimeout(() => {
+        recog.current.stop();
+      }, 100);
       lastResultsIndex = -1;
       lastWordsIndex = -1;
       editDist = [];
       currResults = [];
       accResults = [];
-      recog.current.stop();
     }
-  }, [listening]);
+  }, [listening, autoRestart]);
 
   const [results, setResults] = React.useState("");
 
   React.useEffect(() => {
     const handleResult = ({ results }) => {
-      const interim = Array.from(results)
-        //.filter((r) => !r.isFinal)
-        .map((r) => r[0].transcript)
-        .join(" ");
-
+      let interim = "";
+      if (language === "zh") {
+        interim = Array.from(results)
+          .map((r) => r[0].transcript)
+          .join("");
+      } else {
+        interim = Array.from(results)
+          //.filter((r) => !r.isFinal)
+          .map((r) => r[0].transcript)
+          .join(" ");
+      }
       setResults(interim);
-      currResults = interim.split(" ").filter((r) => r != "");
+      currResults = segmentText(language, interim);
 
-      const newIndex = calcProgress(words, accResults.concat(currResults));
+      const newIndex = calcProgress(
+        language,
+        words,
+        accResults.concat(currResults)
+      );
       /*
       const newIndex = interim.split(" ").reduce((memo, word) => {
         if (memo >= words.length) {
@@ -207,14 +268,14 @@ export default function Teleprompter({ words, progress, listening, onChange }) {
     return () => {
       recog.current.removeEventListener("result", handleResult);
     };
-  }, [onChange, progress, words]);
+  }, [onChange, progress, words, language]);
 
   React.useEffect(() => {
     scrollRef.current
       .querySelector(`[data-index='${progress + 3}']`)
       ?.scrollIntoView({
         behavior: "smooth",
-        block: "nearest",
+        block: "center",
         inline: "start",
       });
   }, [progress]);
@@ -222,20 +283,20 @@ export default function Teleprompter({ words, progress, listening, onChange }) {
   return (
     <React.Fragment>
       <StyledTeleprompter ref={scrollRef}>
-        {" "}
         {words.map((word, i) => (
           <span
             key={`${word}:${i}`}
             data-index={i}
             style={{
-              color: i < progress ? "#ccc" : "#fff",
+              color: i < progress ? "#888" : "#fff",
             }}
           >
-            {word}{" "}
+            {word}
+            {language === "zh" ? "" : " "}
           </span>
-        ))}{" "}
+        ))}
       </StyledTeleprompter>{" "}
-      {results && <Interim> {results} </Interim>}
+      {/* {results && <Interim> {results} </Interim>} */}
     </React.Fragment>
   );
 }
