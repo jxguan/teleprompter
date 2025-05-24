@@ -1,7 +1,7 @@
 {
   "name": "teleprompter",
   "version": "1.0.0",
-  "homepage": "https://jxguan.github.io/teleprompter",
+  "homepage": "https://tp.guan.io",
   "private": true,
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
